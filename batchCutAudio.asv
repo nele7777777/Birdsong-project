@@ -1,0 +1,107 @@
+function batchCutAudio()
+% -------------------------------------------------------------------------
+% MATLAB 脚本: batchCutAudio.m
+% 功能: 根据 CSV/Excel 文件中的时间戳批量切割音频，并按音节标签分类保存到子文件夹。
+% -------------------------------------------------------------------------
+
+% (配置参数和核心逻辑的加载部分保持不变...)
+
+% --- 1. 配置参数 ---
+
+% 原始音频文件路径 (请更改为你的音频文件路径)
+
+% INPUT_AUDIO_FILE = 'D:\Canary project\audio May 2024\normalized loudness\1_116_136_m_1';
+
+file = 'D:\Canary project\audio May 2024\normalized loudness\1_116_136_m_1.wav';
+
+disp(isfile(file)); % 返回 1 表示存在
+
+disp(exist(file,'file')); % 2 = 文件存在（或 0 表示不存在）
+
+% CSV 或 Excel 文件路径
+
+ANNOTATION_FILE = 'D:\Canary project\audio May 2024\train dataset\Ch3_1_1\1_116_136_m_1_annotations';
+
+% 切割后的音频保存目录
+
+OUTPUT_DIR = 'D:\Canary project\audio May 2024\output_syllable_clips\Ch3';
+
+% CSV/Excel 文件中，标记起始时间、结束时间和标签的列名
+
+START_TIME_COL = 'start_seconds';
+
+END_TIME_COL = 'stop_seconds';
+
+LABEL_COL = 'name';
+
+% --- 2. 核心逻辑 (简化) ---
+disp(isfile(file));
+disp(exist(file,'file'));
+
+% (加载表格 T 和音频 y/fs 的部分保持不变)
+try
+    T = readtable(ANNOTATION_FILE);
+catch ME
+    disp(['错误: 读取注释文件失败。请检查文件路径和格式。错误信息: ', ME.message]);
+    return;
+end
+% ... (列检查和目录创建保持不变) ...
+
+if isfile(file)
+    [y,fs] = audioread(file);
+else
+    error('File not found: %s', file);
+end
+
+total_clips = size(T, 1);
+disp(['检测到 ', num2str(total_clips), ' 个需要切割的音节片段。']);
+
+% 遍历表格中的每一行注释
+for index = 1:total_clips
+    start_time_s = T{index, START_TIME_COL};
+    end_time_s = T{index, END_TIME_COL};
+    label = char(T{index, LABEL_COL}); % 转换为字符数组
+
+    % 清理标签用于文件夹和文件名
+    label_clean = strrep(label, ' ', '_');
+    label_clean = strrep(label_clean, '/', '-');
+    
+    % --- 关键修改: 创建子文件夹 ---
+    % 构造当前音节类别的子文件夹路径
+    CURRENT_SYLLABLE_DIR = fullfile(OUTPUT_DIR, label_clean);
+    
+    % 如果子文件夹不存在，则创建
+    if ~exist(CURRENT_SYLLABLE_DIR, 'dir')
+        mkdir(CURRENT_SYLLABLE_DIR);
+    end
+    
+    % --- 转换为音频采样点索引 (Sample Index) ---
+    start_sample = round(start_time_s * fs) + 1;
+    end_sample = round(end_time_s * fs);
+    
+    % 确保索引在有效范围内
+    if start_sample >= end_sample || start_sample < 1 || end_sample > length(y)
+        disp(['警告: 跳过第 ', num2str(index), ' 行注释，时间戳无效或超出音频范围: ', num2str(start_time_s), 's - ', num2str(end_time_s), 's']);
+        continue;
+    end
+    
+    % 切割音频
+    clip = y(start_sample:end_sample, :); 
+    
+    % 构造输出文件名 (例如: clip_001.wav - 标签作为目录名)
+    
+    output_filename = ['clip_', num2str(index, '%03d'), '.wav'];
+    
+    % 输出路径现在指向子文件夹
+    output_path = fullfile(CURRENT_SYLLABLE_DIR, output_filename);
+
+    % 导出保存片段
+    audiowrite(output_path, clip, fs);
+    
+    disp(['成功导出 (', num2str(index), '/', num2str(total_clips), '): ', output_filename, ' 到文件夹: ', label_clean]);
+end
+
+disp(' ');
+disp('所有片段切割完成并分类保存！');
+
+end
