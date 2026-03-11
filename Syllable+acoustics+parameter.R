@@ -4,7 +4,7 @@ library(dplyr)
 library(fs)
 
 # source_dir <- "C:/Users/hfangyu/Desktop/OLD_segmented"
-target_dir <- "D:\\Aging bird project\\1. Old-Young same individual\\159\\O_output_syllable_clips"
+target_dir <- "D:\\Aging bird project\\1. Old-Young same individual\\159\\Y_output_syllable_clips"
 # dir_create(target_dir)
 # 
 # 
@@ -58,5 +58,5 @@ features <- spectro_analysis(
 )
 
 # save
-write.csv(features, "C:\\Users\\lyuxuan\\Project_Code/159O.csv", row.names = FALSE)
+write.csv(features, "C:\\Users\\lyuxuan\\Project_Code/159Y.csv", row.names = FALSE)
 print("Done")
