@@ -5,9 +5,9 @@ function batchCutAudio_AutoMatch()
 % -------------------------------------------------------------------------
 
 % --- 1. 配置路径 ---
-ANNOTATION_DIR = 'D:\Aging bird project\1. Old-Young same individual\159\Y_annotated_excel';
-AUDIO_DIR = 'D:\Aging bird project\1. Old-Young same individual\159\Y_denoised';
-MAIN_OUTPUT_DIR = 'D:\Aging bird project\1. Old-Young same individual\159\Y_output_syllable_clips';
+ANNOTATION_DIR = 'D:\Canary project\audio  May 2024\train dataset_compressed';
+AUDIO_DIR = 'D:\Canary project\audio  May 2024\normalized loudness\Ch4';
+MAIN_OUTPUT_DIR = 'D:\Canary project\audio  May 2024\output_syllable_clips_May_compressed';
 
 % 列名配置
 START_TIME_COL = 'start_seconds';
