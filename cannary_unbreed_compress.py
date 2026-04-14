@@ -28,7 +28,8 @@ def process_annotation_files(folder_path):
 
                 # 映射规则：G→B
                 rename_map = {
-                    "G": "B",
+                    "f'": "h",
+
                 }
 
                 new_names = original_names.replace(rename_map)
@@ -56,5 +57,5 @@ def process_annotation_files(folder_path):
     print(f"✨ 实际执行修改的文件数: {modified_files_count}")
 
 if __name__ == "__main__":
-    target_folder = r'D:\Canary project\audio Nov 2023\train dataset removeG\Ch6_annotated_excel'
+    target_folder = r'D:\Aging bird project\offspring from old bird+tutor young father\Pair 1\Tutee24733_annotated_excel'
     process_annotation_files(target_folder)

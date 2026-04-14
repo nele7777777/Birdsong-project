@@ -1,0 +1,198 @@
+1.总结
+2.介绍：本研究分为三个模块 分别是canary在繁殖期和非繁殖期的歌曲区别分析，zebra finch同一个体年轻时和年老时歌曲区别分析，以及zebra finch老年个体作为导师教后代唱歌和年轻导师教后代唱歌后代对歌曲的学习情况。其中，机器学习的作用主要体现在对大量歌曲中音符的标记上。一首2s的歌曲可能包含多个不同音符的组合，通过标记这些音符，可以分析鸟类歌曲的语法和语义。在对少量歌曲进行标记后，通过训练模型可以实现自动批量音符标记。另外通过用对照组的模型来预测实验组的音符也可以得到基于机器学习的音符对比。
+研究过程主要分为三个阶段，首先是对音频数据降噪归一化，然后是训练机器学习模型并预测大量歌曲的音符，最后是检验并切割音符用于后续分析。
+研究重点放在机器学习模型训练上，对后续分析仅进行到生成各项音频指标和umap图部分，动物行为学分析会由我的导师继续进行。
+3.数据采集和处理
+3.1 数据采集 （音符指标和数据来源数据分类）
+canary歌曲是我切割的 在野外录制 噪音较大
+finch歌曲是导师切割的 在录音棚录制 噪音较小 机器学习预测效果较好
+采集的歌曲总量汇总：
+canary
+May 2024 Dataset
+\begin{itemize}
+
+    \item \textbf{Channel 0 (Ch0):} 52 Song Sequences
+
+    \item \textbf{Channel 1 (Ch1):} 79 Song Sequences
+
+    \item \textbf{Channel 2 (Ch2):} 82 Song Sequences
+
+    \item \textbf{Channel 3 (Ch3):} 66 Song Sequences
+
+    \item \textbf{Channel 4 (Ch4):} 71 Song Sequences, including 35 specific datasets categorized as distinct "Special Voice".
+\end{itemize}
+
+Nov 2023 Dataset
+\begin{itemize}
+
+    \item \textbf{Channel 2 (Ch2):} 32 Song Sequences
+
+    \item \textbf{Channel 3 (Ch3):} 58 Song Sequences
+
+    \item \textbf{Channel 4 (Ch4):} 30 Song Sequences
+
+    \item \textbf{Channel 5 (Ch5):} 35 Song Sequences
+
+    \item \textbf{Channel 6 (Ch6):} 40 Song Sequences
+
+\end{itemize}
+
+zebra finch每个个体都有80首歌曲
+
+3.2 数据处理
+\subsection{Noise reduction}
+
+Noise reduction for the song sequences was performed using the built-in \textbf{Noise Reduction} feature in Audacity. For each recording segment, a specific portion of the background noise was first selected to generate a noise profile, which was then applied to the entire segment.
+
+The Noise Reduction parameters were set conservatively to minimize distortion of the target signal: the Noise Reduction level was set to \textbf{7 dB}.
+
+%, Sensitivity to \textbf{6}, and Frequency Smoothing was set to \textbf{6}.
+
+Depending on the individual noise characteristics of each recording segment, the noise reduction process was iteratively applied two to three times.
+
+Furthermore, for song segments where the target vocalizations occurred predominantly in the high-frequency range, a \textbf{High-Pass Filter} was applied to eliminate low-frequency environmental noise. The high-pass cutoff frequency was set to \textbf{1000 Hz}.
+
+\subsection{Loudness Normalization}
+
+Following the noise reduction steps, the audio segments underwent a loudness normalization process to ensure consistency across the entire dataset. Specifically, the Audacity \textbf{Normalize} feature was utilized to standardize the peak amplitude of every song segment to a uniform target level of $-1.0 \text{ dB}$. This is crucial for training robust machine learning models like the Deep Audio Segmentation (DAS) system, as it prevents any single recording from having disproportionate weight due to amplitude differences.
+
+\subsection{Syllable Annotation}
+\subsubsection{Classification Methodology}
+Syllable definition was based on a multi-dimensional feature analysis. The classification process utilized the following key features, observed primarily via spectrogram visualization:
+\begin{itemize}
+\item \textbf{Acoustic Structure / Shape (Primary Criterion):}The mode of frequency change over time was established as the most critical determinant for classification. Syllables were grouped based on their distinct geometric patterns on the spectrogram, such as:
+\begin{itemize}\item \textbf{Frequency Modulated (FM) Sweeps:} Clear, rapid, continuous change in frequency (e.g., hooks, arcs, or "S" shapes).\item \textbf{Tonal Bars (Pure Tones):} Narrow-band, stable horizontal lines indicating constant or very slow frequency change.\item \textbf{Impulses / Clicks:} Short-duration, broadband vertical energy bursts.
+\end{itemize}
+\item \textbf{Duration (Temporal Feature):}The absolute duration of the syllable was treated as a feature dimension for subsequent clustering, but not as the single decisive factor for classification. Minor variations in duration (e.g., $10\%-20\%$ variability) between two otherwise identical syllables were accepted as natural biological variance and grouped into the same category. 
+\subsubsection{annotation namaing rule}
+The syllable dictionary was expanded from a basic A-U set to include alphanumeric identifiers (e.g., B1) and similarity markers (e.g., A'). Following acoustic structure analysis, similar syllables were consolidated to reduce scoring ambiguity and improve training robustness.
+\end{itemize}
+\end{itemize}
+\subsubsection{Resulting Syllable Inventory}
+To date, the manual annotation process has yielded a inventory of 18 distinct syllable classes. This inventory will serve as the target output for the Deep Audio Segmentation (DAS) model. 对于繁殖期的音符标注一开始是比较严苛的，将结构相同但不同频率重复的音符视为不同音符，导致繁殖期的音符种类有32种，但非繁殖期音符形态变化较大，很难精准分类到繁殖期的音符种类中，因此采用了忽略频率偏移的做法，减少音符种类到18种。
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{ABCDE.jpg}
+    \caption{Syllable annotation A-E}
+    \label{fig:ABCDE}
+\end{figure}
+
+\subsection{Data Preprocessing}
+To ensure the integrity of the training labels, a Python-based automated cleaning utility was implemented. This script parses the `.csv` annotation files to remove 
+    \item Label Normalization: Removes the artifact suffix "\_proposals" from the name column to standardize class labels.（generated during previous model predictions.）
+    \item Invalid Entry Pruning: Filters out rows where the fourth column contains a value of -1, indicating an invalid annotation index.
+    \item Noise Removal: Eliminates rows explicitly labeled as "noise".
+\end{itemize}
+ This step is critical to prevent "label noise," ensuring that only human-verified or cleaned "ground truth" data is fed into the next training cycle.
+
+4.模型训练和预测****
+\section{\textbf{Model Training}}
+The Deep Audio Segmentation (DAS) framework was employed for dataset training and prediction. The first training utilizes a manually annotated dataset derived from 10 songs. 
+\subsection{Training Pipeline and Setup}
+The dataset was split with $60\%$ for training and $40\%$ for validation (the initial test set was reserved). The following hyper-parameters were used consistently across all cycles:
+\begin{itemize}
+    \item Downsampling frontend: Not used.
+    \item Network Architecture: 32 filters and 3 TCN blocks.
+    \item Batch Size: 32.
+    \item Learning Rate: 0.0001.
+\end{itemize}
+
+\subsection{Iterative Training Results}
+The model was optimized through nine iterative training cycles using a pseudo-labeling pipeline, where manual corrections of predicted data were fed back into the training set. 
+The training progression can be summarized into three key phases:
+Phase 1: Initial Optimization and Temporal Refinement (Cycles 1–4)
+Progress: The model began with a high validation loss ($1.548$) and poor recognition, correctly identifying only a few instances of specific syllables.
+Outcome: By Cycle 4, the validation loss was significantly reduced to $0.707$. The model transitioned from fragmented detections to accurate recognition of syllables like 'O' and 'B' with correct temporal durations.
+Phase 2: Multi-Channel Expansion and Generalization (Cycles 5–7)
+Progress: Initially, a model trained exclusively on one channel (CH3) failed to generalize to others (e.g., CH0), particularly for pulse-like syllables.
+Outcome: The inclusion of multi-channel data ($CH3+CH0$) stabilized cross-channel detection. However, a labeling bias toward the larger CH3 dataset was observed, identifying a bottleneck in cross-channel temporal accuracy.
+Phase 3: Final Integration and Robustness Testing (Cycles 8–9)
+Progress: The final cycles incorporated data from all five recording channels (CH0–CH4) to force the learning of channel-invariant features.
+Outcome: The process culminated in Cycle 9 with a final validation loss of 0.438. While the model achieves optimal performance on clean, low-noise data, sensitivity to high background noise remains the primary unresolved challenge.
+
+\begin{description}[style=nextline, leftmargin=1em, font=\bfseries]
+    \item[Phase 1: Initial Optimization and Temporal Refinement (Cycles 1--4)] \hfill \\
+    \textbf{Progress:} The model initially exhibited a high validation loss of $1.548$, with poor recognition performance, correctly identifying only a few instances of specific syllables. \\
+    \textbf{Outcome:} By Cycle 4, the validation loss was significantly reduced to $0.707$. The model transitioned from fragmented detections to the accurate recognition of syllables with correct temporal durations.
+
+    \item[Phase 2: Multi-Channel Expansion and Generalization (Cycles 5--7)] \hfill \\
+    \textbf{Progress:} Initially, a model trained exclusively on a single channel (CH3) failed to generalize to others (e.g., CH0), particularly for pulse-like syllables. \\
+    \textbf{Outcome:} The inclusion of multi-channel data ($CH3+CH0$) stabilized cross-channel detection. However, a labeling bias toward the larger CH3 dataset was observed, identifying a bottleneck in cross-channel temporal accuracy.
+
+    \item[Phase 3: Final Integration and Robustness Testing (Cycles 8--9)] \hfill \\
+    \textbf{Progress:} The final cycles incorporated data from all five recording channels (CH0--CH4) to force the learning of channel-invariant features. \\
+    \textbf{Outcome:} The process culminated in Cycle 9 with a final validation loss of $0.438$. While the model achieves optimal performance on clean, low-noise data, sensitivity to high background noise remains the primary unresolved challenge.
+\end{description}
+\subsection在完成对歌曲的音符预测后，需要手动检查音符标注的正确性。因此对所有歌曲都进行了人工二次检查来提高结果可信度
+
+6.音符处理和结果展示
+6.1切割音符
+\subsection{Syllable Segmentation}
+为了用于后面对不同音符的分析, an automated segmentation routine was developed in MATLAB. This method leverages the accurate time-based annotations previously created for the song sequences.
+he automated segmentation process directly utilizes the time-based labels exported from the manual annotation phase (e.g., CSV format). This approach ensures that the output segments precisely match the boundaries defined during human review.
+
+\begin{itemize} \item \textbf{Input Data:} The process requires two inputs: the original WAV audio file and the corresponding annotation file (CSV/Excel) containing the start and end times for each syllable. 
+\item \textbf{Segmentation Logic:} The custom MATLAB script loads the annotation file to retrieve the specific \texttt{Start Time (s)} and \texttt{End Time (s)} for every entry.
+\item \textbf{Output Generation:} The script iterates through each annotated syllable, extracts the corresponding audio data array using matrix slicing, and then exports the clipped segment as a separate WAV file using the \texttt{audiowrite} function.
+\item \textbf{Result:} This batch processing capability allows for the rapid generation of a large dataset of individually labeled syllable audio files, which is essential for the subsequent feature extraction and DAS model training. 
+\end{itemize}
+6.2音符标记处理
+\section{Pipeline for Birds Acoustic Analysis}
+The analysis pipeline is designed to process multi-channel temporal annotation data, extract song-level and syllable-level statistics, and summarize the syntactic structure of the songs in a compact, human-readable form. The workflow consists of four main stages:
+
+\begin{enumerate}
+    \item \textbf{Data Ingestion, Cleaning, and Node Compression}: 
+    Annotation files (CSV format) from multiple recording channels are automatically scanned and loaded. For each file, the script:
+    \begin{itemize}
+        \item Converts the \texttt{start\_seconds} and \texttt{stop\_seconds} columns to numeric values and removes rows with invalid or missing timestamps.
+        \item Excludes entries labeled with the auxiliary symbol \texttt{i} and sorts all remaining syllables in ascending order of onset time to reconstruct the full song sequence.
+        \item Applies a \textit{Node Compression} step on the symbolic sequence, where specific, pre-defined adjacent pairs (e.g., \texttt{R} followed by \texttt{H}, \texttt{H} followed by \texttt{R1}, or \texttt{A} followed by \texttt{H'}) are merged into a single composite unit (e.g., \texttt{(R-H)}). This reduces fragmentation of tightly coupled note pairs and yields a more compact structural representation of each song.
+    \end{itemize}
+
+    \item \textbf{Song-Level Temporal Statistics}: 
+    For every individual song (each annotation file within a channel), the script computes a set of descriptive temporal features:
+    \begin{itemize}
+        \item \textbf{Song Duration}: The total song length is obtained as the difference between the earliest onset time and the latest offset time across all syllables.
+        \item \textbf{Syllable Inventory Size}: The total number of annotated syllables and the number of unique syllable types per song are reported, characterizing both repetition and repertoire richness.
+        \item \textbf{Average Syllable Duration}: The mean duration of syllables within a song is calculated from the difference between \texttt{stop\_seconds} and \texttt{start\_seconds} for each entry.
+    \end{itemize}
+
+    \item \textbf{Structural Pattern Extraction and Syllable Duration Profiling}: 
+    To capture both the global structure and fine-grained timing properties of the songs, two complementary analyses are performed:
+    \begin{itemize}
+        \item \textbf{Compressed Structural Pattern}: The time-ordered syllable sequence of each song is first reduced using run-length encoding (grouping consecutive identical labels) and then passed through the node-compression rule set. The resulting sequence is formatted as a symbolic pattern string (e.g., \texttt{A(3)-B(2)-(R-H)(1)-C(4)}), which succinctly summarizes the arrangement and local repetition of syllable types.
+        \item \textbf{Syllable Duration Statistics}: Across all processed songs and channels, individual syllable durations are pooled and grouped by label. For each syllable type, standard descriptive statistics (count, mean, standard deviation, and quantiles) of duration are computed, providing an overview of timing variability within and across note categories.
+    \end{itemize}
+
+    \item \textbf{Outputs and Downstream Use}: 
+    The pipeline generates an Excel workbook that consolidates the multi-channel analysis results:
+    \begin{itemize}
+        \item \textbf{Song\_Summary Sheet}: Contains one row per song with the recording channel, file name, song duration, total and unique syllable counts, average syllable duration, and the compressed structural pattern string. This sheet serves as a convenient overview for comparing songs across channels and recording sessions.
+        \item \textbf{Syllable\_Stats Sheet}: Stores the per-syllable-type duration statistics derived from the aggregated dataset. These summaries can be directly used for downstream visualization (e.g., histograms or violin plots of duration) and for refining syllable class definitions based on temporal consistency.
+    \end{itemize}
+\end{enumerate}
+
+6.3结果UMAP展示
+这部分导师用我的数据做的分析 我只要展示一下图片 说明能看出来非繁殖期和繁殖期音符范围不同（UMAP图）
+
+7.future work
+7.1 跨模型预测能力
+the model's predictive accuracy on its primary training channel (CH3) reached a stable state. However, significant performance degradation was observed when applying the model to cross-channel data (CH0), highlighting a critical need for enhanced model generalization.
+7.2
+The primary challenge is the "domain shift" observed between recording channels. Small variations in background noise and signal-to-noise ratios between CH3 and CH0 cause the model to fail on pulse-like syllables.
+    \item \textbf{Environmental Noise Sensitivity}: 
+    Background noise remains a primary factor constraining generalization. In environments with a low signal-to-noise ratio (SNR), the model is prone to misclassification, as it struggles to distinguish faint syllable features from ambient interference. 
+
+    \item \textbf{High Variability in Non-Breeding Season Data}: 
+    The dataset collected in November 2023 (non-breeding season) presents a unique challenge due to significant \textit{acoustic plasticity}. Unlike the stereotypical songs produced during the breeding season, vocalizations from this period exhibit unstable morphology and inconsistent spectral features. 
+    Crucially, \textbf{continuous syllable sequences are almost non-existent} in this dataset. This lack of sequential context deprives human annotators of the ability to identify syllable types through comparative analysis, making manual annotation prohibitively difficult and subjective.
+
+    \subsection{Future Optimization Strategies}
+To address the aforementioned challenges, we propose the following directions for optimization:
+
+\begin{itemize}
+    \item \textbf{Context-Aware Post-Processing}: 
+    To mitigate noise-induced errors, I plan to leverage the syllable statistics and N-gram patterns derived from analysis result. A \textbf{logic-based filter} to correct sporadic errors can be implemented. For instance, in a stable repetitive sequence (e.g., $A \to A \to \dots$), if noise causes a sudden glitch (e.g., $A \to B \to A$), this anomaly can be detected and corrected by verifying transition probabilities and temporal consistency.
+
+    \item \textbf{Refinement of Class Definitions}: 
+    Future work will involve revisiting the outliers identified in the duration analysis. The syllable class definitions need to be refined to ensure distinct and robust boundaries. By cleaning the training data of ambiguous labels, the model's ability to generalize can be improved, even on more variable data.

@@ -13,8 +13,8 @@ warnings.filterwarnings('ignore')
 
 # --- 配置区域 ---
 data_dirs = {
-    "Breeding Season": r"D:\Canary project\audio  May 2024\output_syllable_clips_May",
-    "Non-breeding Season": r"D:\Canary project\audio Nov 2023\output_syllable_clips_Nov"
+    "Breeding Season": r"D:\Canary project\audio  May 2024\output_syllable_clips_May_compressed",
+    "Non-breeding Season": r"D:\Canary project\audio Nov 2023\output_syllable_clips_Nov_removeG"
 }
 
 def extract_sensitive_features(file_path):
