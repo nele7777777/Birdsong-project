@@ -1,3 +1,7 @@
 Wav/
 __pycache__/
 birds/
+.vscode/
+__pycache__
+Baseline/
+das/
