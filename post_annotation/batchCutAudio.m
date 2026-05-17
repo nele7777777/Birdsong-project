@@ -1,29 +1,28 @@
 function batchCutAudio_AutoMatch()
 % -------------------------------------------------------------------------
-% MATLAB 脚本: batchCutAudio_AutoMatch.m
-% 修改内容：增加了对标签 'i' 的过滤逻辑，不再切割和保存该类音节。
+% MATLAB script: batchCutAudio_AutoMatch.m
+% Skips syllables labeled 'i' (no cut/export for that class).
 % -------------------------------------------------------------------------
 
-% --- 1. 配置路径 ---
+% --- 1. Paths ---
 ANNOTATION_DIR = 'D:\Aging bird project\offspring from old bird+tutor young father\Pair 4\tutee2568_annotated_excel';
 AUDIO_DIR = 'D:\Aging bird project\offspring from old bird+tutor young father\Pair 4\tutee2568_denoised';
 MAIN_OUTPUT_DIR = 'D:\Aging bird project\offspring from old bird+tutor young father\Pair 4\tutee2568_output_syllable_clips';
 
-% 列名配置
 START_TIME_COL = 'start_seconds';
 END_TIME_COL = 'stop_seconds';
 LABEL_COL = 'name';
 CHANNEL_COL = 'channel';
 
-% --- 2. 获取所有 CSV 文件列表 ---
+% --- 2. List CSV files ---
 csvFiles = dir(fullfile(ANNOTATION_DIR, '*.csv'));
 if isempty(csvFiles)
-    disp('错误: 在注释文件夹中未找到任何 .csv 文件。');
+    disp('Error: no .csv files in annotation folder.');
     return;
 end
-disp(['找到 ', num2str(length(csvFiles)), ' 个注释文件，开始匹配音频...']);
+disp(['Found ', num2str(length(csvFiles)), ' annotation files; matching audio...']);
 
-% --- 3. 循环处理每个注释文件 ---
+% --- 3. Process each annotation file ---
 for i = 1:length(csvFiles)
     csvName = csvFiles(i).name;
     csvPath = fullfile(ANNOTATION_DIR, csvName);
@@ -33,18 +32,18 @@ for i = 1:length(csvFiles)
     audioPath = fullfile(AUDIO_DIR, audioName);
     
     if ~exist(audioPath, 'file')
-        disp(['⚠️ 跳过: 找不到对应的音频文件 - ', audioName]);
+        disp(['Skip: audio not found - ', audioName]);
         continue;
     end
     
     disp('---------------------------------------------------------');
-    disp(['正在处理: ', audioName]);
+    disp(['Processing: ', audioName]);
     
     try
         T = readtable(csvPath);
         [y, fs] = audioread(audioPath);
     catch ME
-        disp(['❌ 出错: 读取 ', csvName, ' 失败。', ME.message]);
+        disp(['Error reading ', csvName, ': ', ME.message]);
         continue;
     end
     
@@ -54,43 +53,35 @@ for i = 1:length(csvFiles)
     
     total_rows = size(T, 1);
     if total_rows == 0
-        disp('信息: 该注释文件没有有效音节（channel 均为 -1）。');
+        disp('Info: no valid syllables (all channel == -1).');
         continue;
     end
 
-    % 计数器：记录实际导出的片段数
     exported_count = 0;
 
-    % --- 4. 执行切割逻辑 ---
+    % --- 4. Cut and export ---
     for index = 1:total_rows
         label = char(T{index, LABEL_COL});
         
-        % *********************************************************
-        % 新增过滤逻辑：如果标签是 'i'，则直接跳过
         if strcmp(label, 'i')
-            continue; 
+            continue;
         end
-        % *********************************************************
 
         start_time_s = T{index, START_TIME_COL};
         end_time_s = T{index, END_TIME_COL};
         
-        % 清理标签名以便建立文件夹
         label_clean = regexprep(label, '[ \/\\:*?"<>|]', '_'); 
         
         SAVE_DIR = fullfile(MAIN_OUTPUT_DIR, label_clean);
         if ~exist(SAVE_DIR, 'dir'), mkdir(SAVE_DIR); end
         
-        % 索引计算
         start_sample = round(start_time_s * fs) + 1;
         end_sample = round(end_time_s * fs);
         
-        % 边界检查
         if start_sample >= end_sample || start_sample < 1 || end_sample > length(y)
             continue;
         end
         
-        % 切割与保存
         clip = y(start_sample:end_sample, :);
         [~, channel_name] = fileparts(AUDIO_DIR);
         output_filename = [channel_name, '_', audioBaseName, '_id', num2str(index, '%03d'), '_', label_clean, '.wav'];
@@ -99,8 +90,8 @@ for i = 1:length(csvFiles)
         exported_count = exported_count + 1;
     end
     
-    disp(['✅ 完成: 已导出 ', num2str(exported_count), ' 个片段（已跳过所有标签为 "i" 的音节）。']);
+    disp(['Done: exported ', num2str(exported_count), ' clips (skipped label "i").']);
 end
 disp('=========================================================');
-disp('所有任务处理完毕！');
+disp('All tasks finished.');
 end

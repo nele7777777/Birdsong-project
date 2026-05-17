@@ -1,4 +1,4 @@
-"""MD5 hash of a dataset path for versioning (vendored from upstream DAS ``data_hash``)."""
+"""MD5 hash of a dataset path for versioning (``train_core`` optional ``data_hash`` field)."""
 
 from __future__ import annotations
 

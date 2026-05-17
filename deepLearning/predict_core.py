@@ -1,5 +1,5 @@
 """
-Local inference orchestration (does not call ``das.predict.cli_predict`` or ``das.predict.predict``).
+Local inference orchestration.
 
 Uses ``deepLearning.minimal_predict.run_minimal_predict`` for forward + postprocess,
 ``deepLearning.utils`` for model load, and ``deepLearning.utils.annot.Events`` for CSV/H5.
@@ -22,6 +22,7 @@ def run_inference(
     path: str,
     model_save_name: str,
     save_filename: Optional[str] = None,
+    out_dir: Optional[str] = None,
     save_format: str = "csv",
     verbose: int = 1,
     batch_size: Optional[int] = None,
@@ -38,9 +39,15 @@ def run_inference(
     resample: bool = True,
 ) -> None:
     """
-    WAV file or folder → annotations CSV/H5 (same layout as the upstream DAS CLI).
+    WAV file or folder → annotations CSV/H5 (CSV columns match ``*_annotations.csv`` used in prepare).
 
     ``model_save_name``: path prefix without ``_model.h5`` (same as training output).
+
+    Output path:
+      * Single WAV: ``save_filename`` if given; else ``out_dir / <stem>_annotations.csv`` if ``out_dir``;
+        else ``<wav_stem>_annotations.csv`` beside the WAV (or ``_predict.h5`` when ``save_format='h5'``).
+      * Folder of WAVs: ``save_filename`` is ignored; each file → ``out_dir / <stem>_…`` when ``out_dir`` is set,
+        otherwise beside each WAV.
     """
     from deepLearning.minimal_predict import run_minimal_predict
     from deepLearning.utils.annot import Events
@@ -49,21 +56,36 @@ def run_inference(
     if save_format not in ("csv", "h5"):
         raise ValueError("save_format must be 'csv' or 'h5'.")
 
-    if os.path.isdir(path) and save_filename is not None:
-        logging.warning("%s is a folder; ignoring save_filename=%s", path, save_filename)
+    suffix = "_predict.h5" if save_format == "h5" else "_annotations.csv"
 
-    if os.path.isdir(path):
-        filenames = sorted(glob.glob(f"{path}/*.wav"))
+    is_dir = os.path.isdir(path)
+    if is_dir:
+        dir_path = os.path.abspath(path)
+        filenames = sorted(glob.glob(os.path.join(dir_path, "*.wav")))
         filenames = [f for f in filenames if not os.path.isdir(f)]
     elif os.path.isfile(path):
         filenames = [path]
     else:
         raise FileNotFoundError(path)
 
+    if is_dir and save_filename is not None:
+        logging.warning("%s is a folder; ignoring save_filename=%s (use --out_dir for a common output folder).", path, save_filename)
+
+    out_root: Optional[str] = None
+    if out_dir is not None:
+        out_root = os.path.abspath(os.path.expanduser(out_dir))
+        os.makedirs(out_root, exist_ok=True)
+
+    def resolve_out_path(recording_filename: str) -> str:
+        if save_filename is not None and not is_dir:
+            return str(save_filename)
+        stem = os.path.splitext(os.path.basename(recording_filename))[0]
+        if out_root is not None:
+            return os.path.join(out_root, stem + suffix)
+        return os.path.splitext(recording_filename)[0] + suffix
+
     logging.info("Loading model from %s", model_save_name)
     model, params = utils.load_model_and_params(model_save_name)
-
-    explicit_out = None if os.path.isdir(path) else save_filename
 
     for recording_filename in filenames:
         logging.info("Loading audio %s", recording_filename)
@@ -106,6 +128,8 @@ def run_inference(
                     list(set(segments["sequence"])),
                 )
 
+            out_path = resolve_out_path(recording_filename)
+
             if save_format == "h5":
                 payload = {
                     "events": events,
@@ -113,18 +137,10 @@ def run_inference(
                     "class_probabilities": class_probabilities,
                     "class_names": class_names,
                 }
-                if explicit_out is None:
-                    out_path = os.path.splitext(recording_filename)[0] + "_das.h5"
-                else:
-                    out_path = str(explicit_out)
                 logging.info("Saving %s", out_path)
                 flammkuchen.save(out_path, payload)
             else:
                 evt = Events.from_predict(events, segments)
-                if explicit_out is None:
-                    out_path = os.path.splitext(recording_filename)[0] + "_annotations.csv"
-                else:
-                    out_path = str(explicit_out)
                 logging.info("Saving %s", out_path)
                 evt.to_df().to_csv(out_path)
 

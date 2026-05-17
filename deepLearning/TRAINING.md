@@ -1,38 +1,38 @@
-# DAS 鸟类音节训练：流程与概念说明
+# Birdsong syllable training: flow and concepts
 
-本文说明 `deepLearning/train_core.py` 里的训练在做什么，以及与完整 `das/train.py` 的差别。
+This document explains what training in `deepLearning/train_core.py` does, and what was trimmed compared to a full upstream training script.
 
-## 整体流程（端到端）
+## End-to-end flow
 
-1. **数据**（`prepare` 生成）：一段波形 \(x[t]\) 与对齐的标签矩阵 \(y[t,c]\)。每一时刻 \(t\) 对应一行「类别概率」（含静音类 `noise`），由手工 `_annotations.csv` 转成帧级 one-hot / 归一化概率（见 `das.make_dataset.normalize_probabilities`）。
-2. **滑窗**：网络不看单个采样点，而看长度为 **`nb_hist`** 的一段上下文（默认 1024 点）。对每个窗口，网络输出 **当前中心时刻**（或对齐时刻）的类别分布——这叫 **帧级分类（frame-wise classification）**。
-3. **前端 + TCN**：默认模型名 `tcn` 在 DAS 里对应 **`tcn_stft`**：可先 STFT 把波形变成时频表示，再堆叠 **时序卷积网络（TCN）**——膨胀卷积（dilations 如 1,2,4,8,16）用大感受野捕获音节结构，参数量相对 LSTM 更易并行。
-4. **损失**：多类时用 **`categorical_crossentropy`**（在 `das.models` 里编译进模型）：预测概率与 \(y\) 对齐。
-5. **验证与早停**：用验证集 `val_loss`，`ModelCheckpoint` 存最优权重，`EarlyStopping` 防止过拟合。
+1. **Data** (from `prepare`): waveform \(x[t]\) and aligned label matrix \(y[t,c]\). Each time \(t\) is a row of class probabilities (including `noise`), built from manual `_annotations.csv` via frame-level one-hot / normalized probabilities (`deepLearning.make_dataset.normalize_probabilities`).
+2. **Sliding window**: The network sees a context of **`nb_hist`** samples (default 1024), not a single sample. Each window predicts the class distribution at the **center** (or aligned) time — **frame-wise classification**.
+3. **Frontend + TCN**: Default model name `tcn` maps to **`tcn_stft`** in `deepLearning.utils.models`: waveform → time–frequency representation, then **temporal convolutional network (TCN)** with dilated convolutions (e.g. 1,2,4,8,16) for large receptive field; easier to parallelize than LSTM for similar context.
+4. **Loss**: Multi-class **`categorical_crossentropy`** (compiled in `deepLearning.utils.models`): predicted probabilities aligned with \(y\).
+5. **Validation and early stopping**: `val_loss` on the validation set; `ModelCheckpoint` for best weights; `EarlyStopping` against overfitting.
 
-推理阶段（`predict`）：由 **`deepLearning/predict_core.py`** 调度（调用 `das.predict.predict` 做前向与分段，不写死在 `cli_predict`）；输出与 DAS CLI 一致，仍依赖同一套 `_params.yaml` / `_model.h5`。
+**Inference** (`predict`): **`deepLearning.predict_core.run_inference`** calls **`deepLearning.minimal_predict.run_minimal_predict`** for forward pass and segment/event post-processing; outputs `_annotations.csv` or **`_predict.h5`**, paired with `_params.yaml` / `_model.h5`.
 
-## 核心概念（为什么要帧级 + TCN）
+## Core concepts (why frame-level + TCN)
 
-| 概念 | 含义 |
-|------|------|
-| **帧级标签** | 每个时间点属于「噪声」还是某个音节类型；比「整段录音一个标签」更细，适合做边界检测。 |
-| **`nb_hist`** | 模型每次决策看到的采样点数；越大上下文越长，显存与计算也越大。 |
-| **`stride=1`（分类默认）** | 相邻窗口在时间轴上每次移动 1 个采样（配合 center label），密集预测。 |
-| **`y_offset ≈ nb_hist/2`** | 标签取窗口中心时刻，使决策对齐声学事件的中间而非边界。 |
-| **TCN / dilated conv** | 用多层空洞卷积在同一帧上看到更远的前后文，适合鸟鸣这类短时结构化声音。 |
+| Concept | Meaning |
+|---------|---------|
+| **Frame-level labels** | Each time point is noise or a syllable type; finer than one label per recording; suited to boundary detection. |
+| **`nb_hist`** | Samples per decision window; larger → longer context, more memory and compute. |
+| **`stride=1` (classification default)** | Windows advance one sample at a time (with center label) for dense predictions. |
+| **`y_offset ≈ nb_hist/2`** | Label taken at window center so decisions align with the middle of acoustic events, not edges. |
+| **TCN / dilated conv** | Stacked dilated convolutions see long context per frame; good for short structured sounds like birdsong. |
 
-## `train_core.py` 与完整 `das.train.train` 的差异
+## How `train_core.py` differs from a heavy training script
 
-本仓库的 **`run_classification_training`** **只保留「分类 + 标准拟合」主干**：
+**`run_classification_training`** keeps only the **classification + standard fit** path:
 
-- **保留**：`io.load`、`AudioSequence`、`models.model_dict`、`utils.save_params`、checkpoint / early stopping（与上游一致，便于 `predict`）。
-- **省略**：数据增强、wandb/tensorboard、`post_opt` 网格搜索后处理调参、完整 test 集评测报表等（减少分支与依赖；需要时可回到上游 `das.train.train`）。
+- **Kept**: `io.load`, `AudioSequence`, `models.model_dict`, `utils.save_params`, checkpoint / early stopping (same format as inference loading).
+- **Omitted**: data augmentation, wandb/tensorboard, `post_opt` grid search, full test-set reports, etc. (fewer branches and dependencies).
 
-因此：**不是从零重写网络数学**，而是把「训练循环」收到本地，结构更清晰；**仍依赖已安装的 `das` 包**（模型定义、数据管线与推理格式不变）。
+**Dependencies**: TensorFlow and modules under `deepLearning/` only; no separate birdsong segmentation package required.
 
-## 相关文件
+## Related files
 
-- `deepLearning/dataset.py`：WAV + `*_annotations.csv` → `*.npy` 数据集。
-- `deepLearning/train_core.py`：精简训练入口。
-- `das/docs/technical/data_formats.md`：官方数据字典约定。
+- `deepLearning/dataset.py`: WAV + `*_annotations.csv` → `*.npy` dataset.
+- `deepLearning/train_core.py`: streamlined training entry.
+- `deepLearning/data_formats.md`: data dict and file layout.

@@ -5,3 +5,8 @@ birds/
 __pycache__
 Baseline/
 das/
+plot.py
+report
+reversion.txt
+command
+deepLearning/das_eval_outputs/

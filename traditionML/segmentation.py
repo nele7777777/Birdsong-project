@@ -53,12 +53,12 @@ def extract_segments(
     if mask.size == 0:
         return segments
 
-    # 将二维时频掩码压到时间轴，得到每一帧是否“有足够能量”
+    # Collapse 2D time-frequency mask to time axis: frame has enough energy
     active_t = np.sum(mask, axis=0) >= min_active_bins
     if not np.any(active_t):
         return segments
 
-    # 合并极短静音空隙，避免一个音符被切成多个碎段
+    # Bridge very short silence gaps so one note is not split into fragments
     gap_frames = max(int(round(min_silence_gap * sr / hop_length)), 0)
     if gap_frames > 0:
         false_idx = np.where(~active_t)[0]
@@ -86,7 +86,7 @@ def extract_segments(
             ):
                 active_t[gap_start:prev + 1] = True
 
-    # 在时间轴上提取连续 True 区间（保证时段互不重叠）
+    # Extract contiguous True runs on the time axis (non-overlapping intervals)
     active_int = active_t.astype(np.int8)
     changes = np.diff(np.pad(active_int, (1, 1)))
     starts = np.where(changes == 1)[0]
@@ -97,7 +97,7 @@ def extract_segments(
         if duration < min_duration:
             continue
 
-        # 在该时间段内统计频率上下界
+        # Frequency bounds within this time interval
         local_mask = mask[:, t_start_idx:t_end_idx]
         active_f = np.sum(local_mask, axis=1) > 0
         if not np.any(active_f):
@@ -212,7 +212,7 @@ def process_wav_directory(
         raise NotADirectoryError(wav_dir)
 
     wav_files = sorted(wav_dir.glob("*.wav")) + sorted(wav_dir.glob("*.WAV"))
-    # 去重（大小写重复时）
+    # Deduplicate when .wav and .WAV resolve to the same file
     seen = set()
     unique = []
     for p in wav_files:

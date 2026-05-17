@@ -12,7 +12,7 @@ import numpy as np
 def load_segments_from_txt(txt_path):
     segments = []
 
-    # 允许以下形式（含可选的 "|" 分隔）：
+    # Allowed formats (optional "|" separator):
     # Unit 0: 1.78s - 1.83s | 2412-2498 Hz
     # Unit 0: 1.78s - 1.83s 2412-2498 Hz
     line_pattern = re.compile(
@@ -27,7 +27,7 @@ def load_segments_from_txt(txt_path):
 
             match = line_pattern.match(line)
             if match is None:
-                # 跳过无法解析的行，避免单行异常导致流程中断
+                # Skip unparseable lines so one bad row does not abort the run
                 continue
 
             t_start = float(match.group(1))
@@ -35,7 +35,7 @@ def load_segments_from_txt(txt_path):
             f_low = float(match.group(3))
             f_high = float(match.group(4))
 
-            # 过滤非法区间，确保后续处理稳定
+            # Drop invalid intervals for stable downstream processing
             if t_end <= t_start or f_high <= f_low:
                 continue
 
@@ -106,7 +106,7 @@ def load_segments(segment_path):
     return load_segments_from_txt(segment_path)
 
 
-# librosa.feature.delta 默认 width=9；此处 cap 同值，帧数不足时降为 ≤帧数的最大奇数（≥3）
+# librosa.feature.delta default width=9; cap here; if too few frames use largest odd <= n_frames (>=3)
 MFCC_DELTA_DEFAULT_WIDTH = 9
 MFCC_DELTA_MIN_FRAMES = 3
 
@@ -146,8 +146,8 @@ def extract_mfcc_features(
     delta_width: int | None = None,
 ):
     """
-    delta_width: 显式传给 librosa delta 的奇数宽度；默认 None 时按帧数自适应（最大 cap=MFCC_DELTA_DEFAULT_WIDTH）。
-    帧数 < MFCC_DELTA_MIN_FRAMES 时返回 None。
+    delta_width: odd width passed to librosa delta; if None, adapt to frame count (cap=MFCC_DELTA_DEFAULT_WIDTH).
+    Returns None when n_frames < MFCC_DELTA_MIN_FRAMES.
     """
     n_fft_eff = pick_n_fft_for_segment(len(y_seg), n_fft)
 
@@ -174,7 +174,7 @@ def extract_mfcc_features(
     delta  = librosa.feature.delta(mfcc, width=width)
     delta2 = librosa.feature.delta(mfcc, order=2, width=width)
 
-    # 统计汇总（传统做法）
+    # Per-coefficient mean/std summary (classic MFCC pipeline)
     features = []
 
     for M in (mfcc, delta, delta2):
@@ -242,7 +242,7 @@ def extract_shape_features(S):
 def extract_segment_features(y, sr, segment):
     y_seg = extract_segment_waveform(y, sr, segment)
 
-    if len(y_seg) < 0.01 * sr:   # 极短片段直接跳过
+    if len(y_seg) < 0.01 * sr:   # skip extremely short clips
         return None
 
     mfcc_feat = extract_mfcc_features(y_seg, sr)
@@ -276,10 +276,10 @@ def _skipped_segment_line(
     sample_rate: int | None = None,
 ) -> str:
     """
-    skip_batch_summary: same格式 as控制台一行，
-    「segments.csv + wav.wav -> xxx_MFCC.csv」，便于辨认是哪条任务里被 skip。
+    skip_batch_summary: same format as one console line,
+    e.g. segments.csv + wav.wav -> xxx_MFCC.csv, to identify which batch job skipped.
 
-    第N段 = 按 segments CSV 行顺序从 1 数；segment_0based_index = Python/enumerate 下标。
+    Segment N = 1-based row order in segments CSV; segment_0based_index = Python enumerate index.
     """
     wav_name = Path(wav_path).name
     ts, te = seg.get("t_start"), seg.get("t_end")
@@ -308,7 +308,7 @@ def _skipped_segment_line(
         )
 
     detail = (
-        f"第{ord_1}段 segment_0based_index={seg_index} |"
+        f"segment_{ord_1} segment_0based_index={seg_index} |"
         f" t_start_s={float(ts):.6f} t_end_s={float(te):.6f} duration_s={dur:.6f}"
         f"{freq_s}{wave_s}{mfcc_s} | {reason}"
     )
@@ -443,7 +443,7 @@ def get_feature_names(n_mfcc=13):
 
 
 def mfcc_csv_name_from_segments_csv(segments_csv_path: Path) -> str:
-    """246_05_segments.csv -> 246_05_MFCC.csv（文件名里 _segments 换成 _MFCC）"""
+    """246_05_segments.csv -> 246_05_MFCC.csv (_segments replaced by _MFCC in filename)."""
     stem = segments_csv_path.stem
     if stem.endswith("_segments"):
         base = stem[: -len("_segments")]
@@ -602,7 +602,7 @@ def batch_mfcc_from_segments_dir(
         f"segments_dir={segments_dir.resolve()}\n"
         f"wav_dir={wav_dir.resolve()}\n"
         f"out_dir={out_dir.resolve()}\n"
-        f"# Lines with SKIP: 第N段 = 1-based row order in each *_segments.csv; "
+        f"# Lines with SKIP: segment N = 1-based row order in each *_segments.csv; "
         f"segment_0based_index = enumerate index; t_* = seconds in WAV timeline; "
         f"f_*_hz from segment CSV; wave_samples = clipped waveform length; "
         f"mfcc_time_frames = MFCC columns after crop (when relevant).\n"

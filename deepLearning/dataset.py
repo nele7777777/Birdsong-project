@@ -1,7 +1,7 @@
 """
-Build a DAS-compatible *.npy dataset directory from WAV + *_annotations.csv pairs.
+Build a ``*.npy`` dataset directory from WAV + *_annotations.csv pairs.
 
-Layout matches das/docs/technical/data_formats.md: train/val splits with x, y and attrs.
+Layout matches ``data_formats.md``: train/val splits with x, y and attrs.
 """
 
 from __future__ import annotations
@@ -74,8 +74,7 @@ def _global_class_names(pairs: List[Tuple[Path, Path, str]]) -> Tuple[List[str],
             raise ValueError(f"{ann}: need 'name' column")
         for n in df["name"].dropna():
             names.add(str(n).strip())
-    syllables = sorted(names)
-    class_names = ["noise"] + syllables
+    class_names = sorted(names)
     class_types = ["segment"] * len(class_names)
     return class_names, class_types
 
@@ -90,7 +89,7 @@ def build_npy_dataset(
     seed: int = 42,
 ) -> Path:
     """
-    Concatenate paired WAV + CSV into train/val npy-dir for ``train_core`` / DAS-style loaders.
+    Concatenate paired WAV + CSV into train/val npy-dir for ``train_core`` / ``io.load``.
 
     val_fraction: fraction of *recordings* used for val when >= 2 pairs; else time-split.
     """
@@ -180,7 +179,7 @@ def build_npy_dataset(
     }
     data["train"] = {"x": train_x, "y": train_y}
     data["val"] = {"x": val_x, "y": val_y}
-    # Minimal test split (some das evaluate paths expect key exists)
+    # Minimal test split (some evaluation helpers expect this key to exist)
     nb_hist = 1024
     if val_x.shape[0] >= nb_hist:
         data["test"] = {"x": val_x[:nb_hist].copy(), "y": val_y[:nb_hist].copy()}

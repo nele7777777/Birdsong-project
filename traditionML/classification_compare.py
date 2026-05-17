@@ -77,6 +77,158 @@ def load_feature_matrix(features_csv):
     return X
 
 
+def append_missing_label_rows(
+    label_path: Path,
+    n_append: int,
+    *,
+    pad_fill: str,
+    y_existing: np.ndarray,
+) -> None:
+    """
+    Append n_append rows to a label file so its line count can match a longer feature CSV.
+
+    - .txt: one label per line (same string each line when pad_fill is 'last': last label in y_existing).
+    - .csv: preserves header if present; new rows duplicate the last data row (pad_fill=='last')
+      or use pad_fill as the first column and empty strings for remaining columns.
+    """
+    label_path = Path(label_path)
+    n_append = int(n_append)
+    if n_append <= 0:
+        return
+
+    if pad_fill == "last":
+        if len(y_existing) == 0:
+            raise ValueError("Cannot pad labels: no existing labels to take 'last' from.")
+        fill_first = str(y_existing[-1])
+    else:
+        fill_first = pad_fill.strip()
+
+    suffix = label_path.suffix.lower()
+    if suffix == ".txt":
+        with open(label_path, "a", encoding="utf-8") as fp:
+            for _ in range(n_append):
+                fp.write(fill_first + "\n")
+        return
+
+    if suffix == ".csv":
+        with open(label_path, "r", encoding="utf-8", newline="") as fp:
+            rows = list(csv.reader(fp))
+        if not rows:
+            raise ValueError(f"Label CSV is empty, cannot append: {label_path}")
+
+        header_like = rows[0] and rows[0][0].strip().lower() in {"label", "labels", "type", "class"}
+        if header_like:
+            header, data = rows[0], rows[1:]
+        else:
+            header, data = None, rows[:]
+
+        if pad_fill == "last":
+            template = list(data[-1]) if data else [fill_first]
+        else:
+            ncol = len(data[-1]) if data else 1
+            template = [fill_first] + ([""] * (ncol - 1)) if ncol > 1 else [fill_first]
+
+        tail = [list(template) for _ in range(n_append)]
+        out_rows = ([header] if header is not None else []) + data + tail
+        tmp = label_path.with_name(label_path.name + ".align_tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8", newline="") as fp:
+                csv.writer(fp).writerows(out_rows)
+            tmp.replace(label_path)
+        except Exception:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            raise
+        return
+
+    raise ValueError(
+        f"--align_mismatch pad_file_last only supports .txt / .csv labels; got {label_path}"
+    )
+
+
+def align_feature_label_counts(
+    X_part: np.ndarray,
+    y_part: np.ndarray,
+    label_path: Path,
+    *,
+    align_mismatch: str,
+    pad_label_fill: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    align_mismatch:
+      strict — require equal lengths (default).
+      pad_memory_last — if more features than labels, pad y by repeating last label (or pad_label_fill);
+        if more labels than features, truncate y to len(X) (warning only).
+      pad_file_last — if more features than labels, append rows to label_path then reload labels;
+        if more labels than features, truncate y in memory (label file unchanged).
+    """
+    label_path = Path(label_path)
+    nx, ny = len(X_part), len(y_part)
+    if nx == ny:
+        return X_part, y_part
+
+    if align_mismatch == "strict":
+        raise ValueError(
+            f"Shape mismatch for features vs {label_path.name}: "
+            f"{nx} feature rows vs {ny} labels. "
+            "Use --align_mismatch pad_memory_last or pad_file_last to reconcile."
+        )
+
+    if align_mismatch not in {"pad_memory_last", "pad_file_last"}:
+        raise ValueError(f"Unknown align_mismatch: {align_mismatch!r}")
+
+    if nx > ny:
+        n_pad = nx - ny
+        if ny == 0:
+            if pad_label_fill == "last":
+                raise ValueError(
+                    f"{label_path.name}: 0 labels but {nx} feature rows; "
+                    "cannot use --pad_label_fill last. Set --pad_label_fill to an explicit class name."
+                )
+            fill = pad_label_fill
+            y_pad = np.array([fill] * nx, dtype=object)
+            print(f"  [align] {label_path.name}: all {nx} labels set to {fill!r} (had no labels).")
+            if align_mismatch == "pad_file_last":
+                append_missing_label_rows(
+                    label_path, nx, pad_fill=pad_label_fill, y_existing=y_pad[:1]
+                )
+                y_new = load_labels(label_path)
+                return X_part, y_new
+            return X_part, y_pad
+
+        if align_mismatch == "pad_memory_last":
+            fill = str(y_part[-1]) if pad_label_fill == "last" else pad_label_fill
+            y_pad = np.concatenate([y_part, np.array([fill] * n_pad, dtype=object)])
+            print(
+                f"  [align] {label_path.name}: padded {n_pad} label(s) in memory "
+                f"(fill={fill!r}) to match {nx} feature rows."
+            )
+            return X_part, y_pad
+
+        # pad_file_last
+        append_missing_label_rows(
+            label_path, n_pad, pad_fill=pad_label_fill, y_existing=y_part
+        )
+        y_new = load_labels(label_path)
+        print(
+            f"  [align] {label_path.name}: appended {n_pad} row(s) on disk "
+            f"(fill={'last row' if pad_label_fill == 'last' else pad_label_fill!r}) "
+            f"to match {nx} feature rows."
+        )
+        if len(y_new) != nx:
+            raise RuntimeError(
+                f"After appending labels, expected {nx} labels, got {len(y_new)} for {label_path}"
+            )
+        return X_part, y_new
+
+    # nx < ny: truncate labels to match features (do not shrink label file)
+    print(
+        f"  [align] {label_path.name}: truncated labels from {ny} to {nx} in memory "
+        f"to match feature rows (label file not modified)."
+    )
+    return X_part, y_part[:nx].copy()
+
+
 def load_labels(labels_file):
     labels_path = Path(labels_file)
     if not labels_path.exists():
@@ -132,7 +284,13 @@ def _resolve_label_path(labels_dir: Path, csv_stem: str) -> Path:
     )
 
 
-def load_dataset_from_directories(features_dir, labels_dir):
+def load_dataset_from_directories(
+    features_dir,
+    labels_dir,
+    *,
+    align_mismatch: str = "strict",
+    pad_label_fill: str = "last",
+):
     """
     Pair features_dir/*.csv with labels_dir/*.txt|.csv:
 
@@ -140,6 +298,8 @@ def load_dataset_from_directories(features_dir, labels_dir):
     (e.g. id_MFCC.csv ↔ id.txt). Fallback: same stem as the CSV filename.
 
     Samples from one feature file share one group id (not split across train/test).
+
+    When row counts differ, see align_mismatch / pad_label_fill (also exposed as CLI flags).
     """
     features_dir = Path(features_dir)
     labels_dir = Path(labels_dir)
@@ -162,11 +322,13 @@ def load_dataset_from_directories(features_dir, labels_dir):
 
         X_part = load_feature_matrix(csv_path)
         y_part = load_labels(label_path)
-        if len(X_part) != len(y_part):
-            raise ValueError(
-                f"Shape mismatch for {csv_path.name} ({label_path.name}): "
-                f"{len(X_part)} feature rows vs {len(y_part)} labels"
-            )
+        X_part, y_part = align_feature_label_counts(
+            X_part,
+            y_part,
+            label_path,
+            align_mismatch=align_mismatch,
+            pad_label_fill=pad_label_fill,
+        )
 
         X_chunks.append(X_part)
         y_list.extend(list(y_part))
@@ -398,6 +560,27 @@ def main():
             "Pairs id_MFCC.csv with id.txt (or id.csv); falls back to id_MFCC.txt."
         ),
     )
+    parser.add_argument(
+        "--align_mismatch",
+        choices=("strict", "pad_memory_last", "pad_file_last"),
+        default="strict",
+        help=(
+            "When a feature CSV has a different number of rows than its label file: "
+            "strict (error); pad_memory_last (repeat last label or --pad_label_fill in RAM); "
+            "pad_file_last (append that many rows to the label .txt/.csv on disk, then reload). "
+            "If there are more labels than feature rows, labels are truncated in memory only."
+        ),
+    )
+    parser.add_argument(
+        "--pad_label_fill",
+        type=str,
+        default="last",
+        metavar="STR",
+        help=(
+            "With pad_* modes when padding is needed: 'last' repeats the last label row, "
+            "else use this exact class string (CSV: first column; extra columns empty)."
+        ),
+    )
     parser.add_argument("--test_size", type=float, default=0.2, help="Test split proportion.")
     parser.add_argument("--random_state", type=int, default=42, help="Random seed.")
     parser.add_argument(
@@ -460,11 +643,23 @@ def main():
             parser.error("--labels_file is required with --features_csv")
         X = load_feature_matrix(args.features_csv)
         y = load_labels(args.labels_file)
+        X, y = align_feature_label_counts(
+            X,
+            y,
+            Path(args.labels_file),
+            align_mismatch=args.align_mismatch,
+            pad_label_fill=args.pad_label_fill,
+        )
         run_eval(X, y)
     else:
         if not args.labels_dir:
             parser.error("--labels_dir is required with --features_dir")
-        X, y, groups, stems = load_dataset_from_directories(args.features_dir, args.labels_dir)
+        X, y, groups, stems = load_dataset_from_directories(
+            args.features_dir,
+            args.labels_dir,
+            align_mismatch=args.align_mismatch,
+            pad_label_fill=args.pad_label_fill,
+        )
         print(f"Loaded {len(stems)} groups: {', '.join(stems)}")
         print(f"Total samples: {len(X)}\n")
         run_eval(X, y, groups=groups)

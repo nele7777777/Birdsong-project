@@ -42,7 +42,7 @@ X <- data.frame(
 }'
 
 for (i in seq_len(nrow(X))) { 
-  wav <- readWave(file.path(flat_dir, X$sound.files[i])) # 使用完整路径 
+  wav <- readWave(file.path(flat_dir, X$sound.files[i])) # use full path
   X$end[i] <- length(wav@left) / wav@samp.rate 
 }
 

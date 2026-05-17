@@ -1,4 +1,4 @@
-"""Dict of dicts <-> hierarchy of npy files (vendored from upstream DAS ``npy_dir``)."""
+"""Dict of dicts <-> hierarchy of npy files (see ``deepLearning.npy_dir``)."""
 
 from __future__ import annotations
 

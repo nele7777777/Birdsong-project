@@ -1,4 +1,4 @@
-"""Annotation matrix helpers (vendored from upstream DAS ``make_dataset``)."""
+"""Annotation matrix helpers (frame labels from interval tables)."""
 
 from __future__ import annotations
 
@@ -12,13 +12,16 @@ logger = logging.getLogger(__name__)
 
 
 def infer_class_info(df: pd.DataFrame):
-    class_names, first_indices = np.unique(df["name"], return_index=True)
-    class_names = list(class_names)
-    class_names.insert(0, "noise")
-
-    class_types = ["segment"]
-    for first_index in first_indices:
-        if df.loc[first_index]["start_seconds"] == df.loc[first_index]["stop_seconds"]:
+    """Unique ``name`` values (sorted), no synthetic background class."""
+    class_names = sorted({str(x).strip() for x in df["name"].dropna()})
+    class_types: list[str] = []
+    for name in class_names:
+        sub = df[df["name"] == name].dropna(subset=["start_seconds", "stop_seconds"], how="all")
+        if sub.empty:
+            class_types.append("segment")
+            continue
+        fi = sub.index[0]
+        if sub.loc[fi, "start_seconds"] == sub.loc[fi, "stop_seconds"]:
             class_types.append("event")
         else:
             class_types.append("segment")
@@ -47,8 +50,17 @@ def make_annotation_matrix(
 
 
 def normalize_probabilities(p: np.ndarray) -> np.ndarray:
-    p_song = np.sum(p[:, 1:], axis=-1)
-
-    p[p_song > 1.0, 1:] = p[p_song > 1.0, 1:] / p_song[p_song > 1.0, np.newaxis]
-    p[:, 0] = 1 - np.sum(p[:, 1:], axis=-1)
+    """Each row sums to 1. Rows with no active class (all zeros) become uniform."""
+    p = np.asarray(p, dtype=np.float64).copy()
+    nb = p.shape[1]
+    if nb == 0:
+        return p
+    row_sum = p.sum(axis=-1)
+    bg = row_sum == 0
+    if np.any(bg):
+        p[bg, :] = 1.0 / nb
+    fg = ~bg
+    if np.any(fg):
+        rs = p[fg].sum(axis=-1, keepdims=True)
+        p[fg] = p[fg] / np.maximum(rs, 1e-12)
     return p

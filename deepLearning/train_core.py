@@ -1,11 +1,9 @@
 """
-Minimal DAS-style training loop for syllable (frame) classification.
+Training loop for syllable (frame) classification.
 
-This module intentionally does NOT call ``das.train.train``. It reimplements only the
-essential path: load *.npy dataset → AudioSequence → build TCN → fit → save checkpoint + YAML.
+Loads a ``*.npy`` dataset directory → ``AudioSequence`` → TCN → ``fit`` → checkpoint + YAML.
 
-Imports training stack from ``deepLearning.utils`` (I/O, ``AudioSequence``, model zoo, utilities),
-vendored from upstream DAS — no ``import das`` in this file.
+Imports the training stack from ``deepLearning.utils`` (I/O, ``AudioSequence``, model zoo, utilities).
 """
 
 from __future__ import annotations
@@ -22,7 +20,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLRO
 
 logger = logging.getLogger(__name__)
 
-# GPU memory — same intent as das/train.py
+# GPU memory growth (avoid allocating full VRAM up front)
 try:
     for device in tf.config.list_physical_devices("GPU"):
         tf.config.experimental.set_memory_growth(device, enable=True)
@@ -51,11 +49,9 @@ def run_classification_training(
     reduce_lr: bool = False,
     reduce_lr_patience: int = 5,
     version_data: bool = True,
-    x_suffix: str = "",
-    y_suffix: str = "",
 ) -> Tuple[keras.Model, Dict[str, Any], keras.callbacks.History]:
     """
-    Train a frame-wise classifier (``with_y_hist=False``) on a DAS npy dataset.
+    Train a frame-wise classifier (``with_y_hist=False``) on a ``*.npy`` dataset directory.
 
     Omits: augmentation, wandb, tensorboard, post_opt grid search, full test-set report.
     """
@@ -65,7 +61,7 @@ def run_classification_training(
     if dilations is None:
         dilations = [1, 2, 4, 8, 16]
 
-    # Classification settings (mirror das.train branch when with_y_hist=False)
+    # Classification settings (with_y_hist=False branch)
     with_y_hist = False
     return_sequences = False
     stride = 1
@@ -82,8 +78,6 @@ def run_classification_training(
 
     params: Dict[str, Any] = {
         "data_dir": data_dir,
-        "x_suffix": x_suffix,
-        "y_suffix": y_suffix,
         "save_dir": save_dir,
         "model_name": model_name,
         "nb_filters": nb_filters,
@@ -128,7 +122,7 @@ def run_classification_training(
     }
 
     logger.info("Loading data from %s", data_dir)
-    d = io.load(data_dir, x_suffix=x_suffix, y_suffix=y_suffix)
+    d = io.load(data_dir)
     params.update(dict(d.attrs))
 
     if version_data:

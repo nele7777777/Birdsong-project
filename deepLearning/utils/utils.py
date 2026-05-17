@@ -7,8 +7,8 @@ import numpy as np
 import yaml
 import h5py
 import scipy.signal
-from . import kapre
-from . import tcn
+from deepLearning import kapre
+from deepLearning import tcn
 from . import models
 from typing import Dict, Callable, Any, List, Tuple, Optional
 

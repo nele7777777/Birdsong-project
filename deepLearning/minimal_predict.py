@@ -1,9 +1,9 @@
 """
-Minimal inference path: forward pass + postprocessing without ``das.predict.predict``.
+Inference path: forward pass + postprocessing.
 
 Uses ``deepLearning.utils.data`` (``AudioSequence`` / ``unpack_batches``) for batches,
 ``deepLearning.utils.utils`` for audio prep, ``segment_utils`` / ``event_utils`` for postprocessing,
-and a local copy of ``labels_from_probabilities`` (same logic as upstream DAS).
+and ``labels_from_probabilities`` for thresholded / argmax labels.
 Outputs match the structures expected by ``deepLearning.utils.annot.Events.from_predict``.
 """
 
@@ -28,7 +28,7 @@ def labels_from_probabilities(
     threshold: Optional[float] = None,
     indices: Optional[Union[Sequence[int], slice]] = None,
 ) -> np.ndarray:
-    """Convert class-wise probabilities into labels (copied from ``das.predict``)."""
+    """Convert class-wise probabilities into labels."""
 
     if indices is None:
         indices = slice(None)
@@ -61,8 +61,8 @@ def predict_probabilities_numpy(
     prepend_data_padding: bool = True,
 ) -> np.ndarray:
     """
-    Same semantics as ``das.predict.predict_probabilities``, but returns a dense
-    ``numpy.ndarray`` [T, nb_classes] (no zarr/dask).
+    Run the model over the full recording in batches and return a dense
+    ``numpy.ndarray`` of shape ``[T, nb_classes]`` (no zarr/dask).
     """
     pred_gen = data.AudioSequence(x=x, y=None, shuffle=False, **params)
     nb_batches = len(pred_gen)
@@ -121,7 +121,16 @@ def _predict_segments_numpy(
 
     labels = labels_from_probabilities(class_probabilities, segment_thres, segment_dims)
 
-    song_binary = (labels > 0).astype(np.int8)
+    legacy_noise_song = (
+        len(segment_dims) == 2
+        and len(segment_names) >= 2
+        and str(segment_names[0]).lower() == "noise"
+    )
+    if legacy_noise_song:
+        song_binary = (labels > 0).astype(np.int8)
+    else:
+        seg_p = class_probabilities[:, segment_dims]
+        song_binary = (np.max(seg_p, axis=1) >= segment_thres).astype(np.int8)
     if segment_fillgap is not None:
         song_binary = segment_utils.fill_gaps(
             song_binary,
@@ -139,10 +148,10 @@ def _predict_segments_numpy(
     segments["onsets_seconds"] = onsets.astype(np.float64) / samplerate
     segments["offsets_seconds"] = offsets.astype(np.float64) / samplerate
 
-    if len(segment_dims) == 2:
+    if legacy_noise_song:
         labels_out = song_binary
-        sequence: Any = [str(segment_names[1])] * len(segments["offsets_seconds"])
-    elif len(segment_dims) > 2 and segment_labels_by_majority:
+        sequence = [str(segment_names[1])] * len(segments["offsets_seconds"])
+    elif len(segment_dims) >= 2 and segment_labels_by_majority:
         ref_o = segment_ref_onsets
         ref_f = segment_ref_offsets
         if ref_o is None:
@@ -157,7 +166,10 @@ def _predict_segments_numpy(
         )
     else:
         labels_out = labels
-        sequence = []
+        if len(segment_dims) == 1 and len(segments["offsets_seconds"]):
+            sequence = [str(segment_names[0])] * len(segments["offsets_seconds"])
+        else:
+            sequence = []
 
     segments["samples"] = labels_out
     segments["sequence"] = sequence
@@ -237,8 +249,7 @@ def run_minimal_predict(
     resample: bool = True,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], np.ndarray, List[str]]:
     """
-    Drop-in replacement for ``das.predict.predict`` returning numpy probabilities
-    (no dask/zarr temporary stores).
+    Full-recording inference returning numpy probabilities (no dask/zarr temporary stores).
 
     Returns:
         events, segments, class_probabilities (np.ndarray), class_names
@@ -293,8 +304,8 @@ def run_minimal_predict(
     )
 
     if pad and pad_len > 0:
-        class_probabilities[-pad_len:, 1:] = 0
-        class_probabilities[-pad_len:, 0] = 1
+        nb_c = class_probabilities.shape[1]
+        class_probabilities[-pad_len:, :] = 1.0 / max(nb_c, 1)
         class_probabilities = class_probabilities[:x_len_original, :].copy()
 
     segments = _predict_segments_numpy(

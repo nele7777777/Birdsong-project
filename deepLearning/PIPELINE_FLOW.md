@@ -1,16 +1,16 @@
-# 从输入音频到标注输出：代码全流程说明
+# End-to-end flow: audio input to annotation output
 
-本文说明 `deepLearning/` 下 **准备数据 → 训练 → 推理** 的调用链、张量/文件含义，以及与 DAS 上游文档的对应关系。
+This document describes the **prepare → train → predict** call chain under `deepLearning/`, tensor/file meanings, and how they map to `data_formats.md`.
 
-## 1. 总览
+## 1. Overview
 
 ```mermaid
 flowchart LR
   subgraph prepare["prepare"]
-    W[WAV 目录]
+    W[WAV folder]
     A["*_annotations.csv"]
     D["dataset.build_npy_dataset"]
-    N["*.npy 目录\n(train/val/test + attrs)"]
+    N["*.npy dir\n(train/val/test + attrs)"]
     W --> D
     A --> D
     D --> N
@@ -19,113 +19,113 @@ flowchart LR
     IO["io.load"]
     SEQ["utils.data.AudioSequence"]
     TC["utils.models TCN"]
-    CK["*_model.h5 + YAML 参数"]
+    CK["*_model.h5 + YAML params"]
     N --> IO --> SEQ --> TC --> CK
   end
   subgraph predict["predict"]
     LB["librosa.load WAV"]
     INF["predict_core.run_inference"]
     MP["minimal_predict.run_minimal_predict"]
-    OUT["*_annotations.csv / *_das.h5"]
+    OUT["*_annotations.csv / *_predict.h5"]
     CK --> INF
     LB --> INF --> MP --> OUT
   end
   N --> train
 ```
 
-入口 CLI：`python -m deepLearning.pipeline prepare|train|predict`（见 `pipeline.py`）。
+CLI entry: `python -m deepLearning.pipeline prepare|train|predict` (see `pipeline.py`).
 
 ---
 
-## 2. 阶段一：准备数据（音频 + CSV → `.npy` 数据集目录）
+## 2. Stage 1: Prepare data (audio + CSV → `.npy` dataset directory)
 
-### 2.1 输入约定
+### 2.1 Input conventions
 
-- **音频**：与每条标注同“核心 id”的 `.wav`，通过 `dataset._resolve_wav_for_annotation` 与 `*_annotations.csv` 配对（支持 `strip_prefix` 前缀）。
-- **标注 CSV**：文件名形如 `{core}_annotations.csv`，至少包含列：`name`、`start_seconds`、`stop_seconds`（与 `data_formats.md` / DAS GUI 导出一致）。占位行（整行 `start`/`stop` 为 NaN）会在构建矩阵时被跳过。
+- **Audio**: `.wav` files paired with `*_annotations.csv` by shared core id via `dataset._resolve_wav_for_annotation` (optional `strip_prefix` on WAV names).
+- **Annotation CSV**: `{core}_annotations.csv` with at least `name`, `start_seconds`, `stop_seconds` (see `data_formats.md` and common export tools). Placeholder rows (NaN `start`/`stop`) are skipped when building matrices.
 
-### 2.2 核心代码路径
+### 2.2 Core code path
 
-| 步骤 | 文件与职责 |
-|------|------------|
-| 扫描 WAV–CSV 对、汇总全局类别 | `dataset.py`：`_collect_pairs`、`_global_class_names` |
-| 逐条录音：读 WAV、建帧级标签矩阵 | `dataset.py`：`build_npy_dataset`；调用 `make_dataset.make_annotation_matrix` 将区间标为 1，再 `normalize_probabilities` 使每帧各类概率和为 1（含 `noise` 列） |
-| 写入磁盘 | `npy_dir.py`：`save` → 目录名以 `.npy` 结尾，内含 `train/x.npy`、`train/y.npy`、`val/...`、`attrs` 等 |
+| Step | Files and roles |
+|------|-----------------|
+| Scan WAV–CSV pairs, global class list | `dataset.py`: `_collect_pairs`, `_global_class_names` |
+| Per recording: load WAV, frame-level label matrix | `dataset.py`: `build_npy_dataset`; `make_dataset.make_annotation_matrix` marks intervals as 1, then `normalize_probabilities` so each frame sums to 1 (including `noise`) |
+| Write to disk | `npy_dir.py`: `save` → directory name ends in `.npy`, contains `train/x.npy`, `train/y.npy`, `val/...`, `attrs`, etc. |
 
-### 2.3 `attrs` 与训练的关系
+### 2.3 `attrs` and training
 
-`build_npy_dataset` 写入的 `data.attrs` 至少包括：
+`build_npy_dataset` writes `data.attrs` including at least:
 
-- `samplerate_x_Hz` / `samplerate_y_Hz`：与 WAV 采样率一致。
-- `class_names`：如 `["noise", "syllable_a", ...]`（**第 0 类为 noise**）。
-- `class_types`：当前实现里**每个类都标为 `"segment"`**（音节/区间任务）；若将来需要脉冲类 `event`，需在 `dataset._global_class_names` 与下游 `minimal_predict` 的 event 分支上统一扩展。
+- `samplerate_x_Hz` / `samplerate_y_Hz`: match WAV sample rate.
+- `class_names`: e.g. `["noise", "syllable_a", ...]` (**index 0 is noise**).
+- `class_types`: currently **every class is `"segment"`** (interval/syllable task); extending `event` types later requires coordinated changes in `dataset._global_class_names` and `minimal_predict` event branches.
 
-训练时 `train_core.run_classification_training` 通过 `io.load` 读入上述结构，并把 `attrs` 合并进 `params`，供 `AudioSequence` 与模型构造使用。
-
----
-
-## 3. 阶段二：训练（`.npy` → TCN → 检查点）
-
-### 3.1 加载数据
-
-- **`io.load(data_dir, ...)`**（`io.py`）：要求路径以 `.npy` 结尾，内部 `npy_dir.load` 得到 `DictClass`；可选 `x_suffix` / `y_suffix` 切换多组 `x`/`y`（本仓库默认数据集通常只用默认键名 `x`/`y`）。
-
-### 3.2 训练循环
-
-- **`train_core.run_classification_training`**（`train_core.py`）：
-  - 固定 **帧分类** 分支：`with_y_hist=False`，`y_offset ≈ nb_hist/2`，`stride=1`。
-  - 用 `train`/`val` 的 `x`、`y` 构造两个 `AudioSequence`（打乱/不打乱）。
-  - `models.model_dict[model_name]`（默认 `tcn`）建图；`utils.save_params` 把完整 `params` 写到与权重相同前缀的 YAML。
-  - `ModelCheckpoint` 保存 `save_path + "_model.h5"`（**`model_save_name` 推理时应为去掉 `_model.h5` 的前缀**）。
-
-### 3.3 张量形状约定（与推理一致）
-
-- `x`：`[时间采样数, 频/特征维, 通道]` 或简化为 `[T, C]`；本流水线由 `dataset` 写出时为 `[T, 1]` 单通道波形，`nb_freq` 在 `train_core` 里取自 `x.shape[1]`。
-- `y`：`[T, nb_classes]`，每行对各类为概率且行和为 1。
+`train_core.run_classification_training` loads this via `io.load`, merges `attrs` into `params` for `AudioSequence` and model construction.
 
 ---
 
-## 4. 阶段三：推理（WAV → 概率序列 → 事件/片段 → CSV 或 H5）
+## 3. Stage 2: Train (`.npy` → TCN → checkpoint)
 
-### 4.1 编排入口
+### 3.1 Load data
 
-- **`predict_core.run_inference`**（`predict_core.py`）：
-  1. `utils.load_model_and_params(model_save_name)` 加载 Keras 模型与 YAML `params`（须与训练时一致，含 `samplerate_x_Hz`、`nb_hist`、`class_names`、`class_types` 等）。
-  2. `librosa.load` 读入 WAV，`x` 转为 `[T, channels]`（多通道会转置为时间×通道）。
-  3. 对每个文件调用 **`minimal_predict.run_minimal_predict`**。
+- **`io.load(data_dir)`** (`io.py`): path must end in `.npy`; `npy_dir.load` returns `DictClass`; each split uses keys `x` and `y`.
 
-### 4.2 前向与后处理
+### 3.2 Training loop
 
-- **`minimal_predict.run_minimal_predict`**（`minimal_predict.py`）：
-  - 可选带通、**重采样到 `params["samplerate_x_Hz"]`**（与训练数据采样率一致，否则帧与时间轴错位）。
-  - 按 batch 用 `AudioSequence` + `model.predict_on_batch` 得到 **帧级 `class_probabilities`，形状 `[T, nb_classes]`**（与训练 `y` 的类别维一致）。
-  - **`class_names[i]` ↔ 概率矩阵第 `i` 列** 一一对应；`noise` 通常为索引 0。
-  - `class_types` 中含 `"segment"` 时：`_predict_segments_numpy` 在 segment 维度上做阈值、`fill_gaps` / `remove_short`，得到 `onsets_seconds` / `offsets_seconds` / `sequence` 等。
-  - 含 `"event"` 时：`_predict_events_numpy` 在对应维度上做点事件检测（本仓库 `dataset` 当前全 `segment` 时，events 字典往往为空）。
+- **`train_core.run_classification_training`** (`train_core.py`):
+  - Fixed **frame classification** path: `with_y_hist=False`, `y_offset ≈ nb_hist/2`, `stride=1`.
+  - Build train/val `AudioSequence` from `x`, `y` (shuffled / not shuffled).
+  - `models.model_dict[model_name]` (default `tcn`) builds the graph; `utils.save_params` writes full `params` YAML beside weights.
+  - `ModelCheckpoint` saves `save_path + "_model.h5"` (**for inference, `model_save_name` is the prefix without `_model.h5`**).
 
-### 4.3 写回标注文件
+### 3.3 Tensor shapes (aligned with inference)
 
-- **CSV**：`Events.from_predict(events, segments)` → `to_df()` → `to_csv`，默认文件名 `{wav_stem}_annotations.csv`（与准备阶段输入格式兼容）。
-- **H5**：`flammkuchen.save` 保存 `events`、`segments`、`class_probabilities`、`class_names` 原始结构。
+- `x`: `[time_samples, freq/feature_dim, channels]` or `[T, C]`; this pipeline writes `[T, 1]` mono waveform from `dataset`; `nb_freq` in `train_core` comes from `x.shape[1]`.
+- `y`: `[T, nb_classes]`, each row is class probabilities summing to 1.
 
 ---
 
-## 5. 类别与时间轴的对应关系（小结）
+## 4. Stage 3: Predict (WAV → probability sequence → events/segments → CSV or H5)
 
-| 概念 | 位置 |
-|------|------|
-| 类名字符串列表 | `params["class_names"]` / 数据集 `attrs["class_names"]` |
-| 第 `k` 类的帧概率 | `class_probabilities[:, k]` |
-| 训练目标 | `y[:, k]`，与上同行数 `T`、同采样率 |
-| 输出的音节区间名 | `segments["sequence"]` 与 `segments["onsets_seconds"]` / `offsets_seconds` 对齐；合并进 CSV 的 `name` / `start_seconds` / `stop_seconds` |
+### 4.1 Orchestration
+
+- **`predict_core.run_inference`** (`predict_core.py`):
+  1. `utils.load_model_and_params(model_save_name)` loads Keras model and YAML `params` (must match training: `samplerate_x_Hz`, `nb_hist`, `class_names`, `class_types`, etc.).
+  2. `librosa.load` WAV; `x` shaped `[T, channels]` (multi-channel transposed to time × channel).
+  3. Per file: **`minimal_predict.run_minimal_predict`**.
+
+### 4.2 Forward pass and post-processing
+
+- **`minimal_predict.run_minimal_predict`** (`minimal_predict.py`):
+  - Optional bandpass, **resample to `params["samplerate_x_Hz"]`** (must match training rate or frames misalign).
+  - Batched `AudioSequence` + `model.predict_on_batch` → **frame-level `class_probabilities` `[T, nb_classes]`** (same class dim as training `y`).
+  - **`class_names[i]` ↔ column `i`** of the probability matrix; `noise` is usually index 0.
+  - If `class_types` includes `"segment"`: `_predict_segments_numpy` thresholds segment dims, `fill_gaps` / `remove_short` → `onsets_seconds` / `offsets_seconds` / `sequence`, etc.
+  - If `"event"`: `_predict_events_numpy` on those dims (with current all-`segment` `dataset`, events dict is often empty).
+
+### 4.3 Write annotations
+
+- **CSV**: `Events.from_predict(events, segments)` → `to_df()` → `to_csv`, default `{wav_stem}_annotations.csv` (compatible with prepare input).
+- **H5**: `flammkuchen.save` stores `events`, `segments`, `class_probabilities`, `class_names`; default `<recording stem>_predict.h5`.
 
 ---
 
-## 6. 衔接与一致性审查（已留意或可改进处）
+## 5. Classes and time axis (summary)
 
-1. **`data_formats.md`** 部分段落沿用上游 DAS 的 `classnames` 等写法；本仓库 Python 代码与 `attrs` 使用 **`class_names` / `class_types`**（下划线），阅读时注意对照 `dataset.py` / `train_core.py`。
-2. **`dataset.build_npy_dataset`** 将 **`class_types` 全部设为 `"segment"`**，与 `make_dataset.infer_class_info` 能区分 `event` 的能力未接好；若标注里存在“脉冲”类，当前不会走 event 检测分支，需后续统一设计。
-3. **`pipeline.py` prepare 说明** 已与实现对齐：公开入口为 `dataset.build_npy_dataset`，其内部再调用 `make_dataset` 与 `npy_dir`。
-4. **`utils/annot.py` 中 `Events.from_df`** 文档已改为列名 `stop_seconds`，与 `from_df` 实现及 CSV 列一致。
+| Concept | Location |
+|---------|----------|
+| Class name list | `params["class_names"]` / dataset `attrs["class_names"]` |
+| Frame probability for class `k` | `class_probabilities[:, k]` |
+| Training target | `y[:, k]`, same `T` rows and sample rate |
+| Output syllable interval names | `segments["sequence"]` aligned with `onsets_seconds` / `offsets_seconds`; merged into CSV `name` / `start_seconds` / `stop_seconds` |
 
-更简的训练参数说明见 `TRAINING.md`；数据布局背景见 `data_formats.md`。
+---
+
+## 6. Consistency notes
+
+1. **`data_formats.md`** may use legacy names like `classnames`; Python code and `attrs` use **`class_names` / `class_types`** — cross-check `dataset.py` / `train_core.py`.
+2. **`dataset.build_npy_dataset`** sets all **`class_types` to `"segment"`**; `make_dataset.infer_class_info` can distinguish `event` but that path is not wired. Pulse/event classes in annotations will not use the event branch until designed end-to-end.
+3. **`pipeline.py` prepare** matches implementation: public entry is `dataset.build_npy_dataset`, which calls `make_dataset` and `npy_dir` internally.
+4. **`utils/annot.py` `Events.from_df`** docs use column `stop_seconds`, matching implementation and CSV columns.
+
+See `TRAINING.md` for training parameters; `data_formats.md` for on-disk layout.

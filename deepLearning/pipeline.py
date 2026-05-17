@@ -5,9 +5,9 @@ Birdsong deep-learning pipeline (deepLearning/* — prepare / train / predict).
 Subcommands:
   prepare   Build *.npy dataset from WAV + *_annotations.csv (``dataset.build_npy_dataset`` → make_dataset + npy_dir)
   train     Core training loop in deepLearning/train_core.py
-  predict   Inference in deepLearning/predict_core.py + minimal_predict (no das.predict)
+  predict   Inference in deepLearning/predict_core.py + minimal_predict
 
-Requires TensorFlow and Python deps used by deepLearning.utils (see repo das/ only if you need upstream CLI).
+Requires TensorFlow and the Python packages imported by deepLearning.utils / dataset.
 """
 
 from __future__ import annotations
@@ -18,11 +18,8 @@ import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_DAS_SRC = _REPO_ROOT / "das" / "src"
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-if _DAS_SRC.is_dir() and str(_DAS_SRC) not in sys.path:
-    sys.path.insert(0, str(_DAS_SRC))
 
 
 def cmd_prepare(args: argparse.Namespace) -> None:
@@ -62,10 +59,14 @@ def cmd_predict(args: argparse.Namespace) -> None:
         path=str(args.wav_path),
         model_save_name=str(args.model_prefix),
         save_filename=str(args.save_csv) if args.save_csv else None,
+        out_dir=str(args.out_dir.expanduser().resolve()) if args.out_dir else None,
         save_format=args.save_format,
         verbose=args.verbose,
         batch_size=args.batch_size,
         segment_thres=args.segment_thres,
+        segment_use_optimized=not args.no_segment_post_opt,
+        segment_minlen=args.segment_minlen,
+        segment_fillgap=args.segment_fillgap,
         event_thres=args.event_thres,
         resample=args.resample,
     )
@@ -74,13 +75,13 @@ def cmd_predict(args: argparse.Namespace) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(
-        description="Birdsong DAS pipeline (prepare → train → predict).",
+        description="Birdsong deep-learning pipeline (prepare → train → predict).",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_prep = sub.add_parser(
         "prepare",
-        help="Build DAS *.npy dataset from WAVs and *_annotations.csv files.",
+        help="Build *.npy dataset directory from WAVs and *_annotations.csv files.",
     )
     p_prep.add_argument("--wav_dir", type=Path, required=True)
     p_prep.add_argument("--annot_dir", type=Path, required=True)
@@ -153,12 +154,44 @@ def main() -> None:
         "--save_csv",
         type=Path,
         default=None,
-        help="Output CSV path (single-file input only). Default: <wav>_annotations.csv",
+        help="Output path (single WAV only). Overrides --out_dir for that case. Default: beside WAV.",
+    )
+    p_pr.add_argument(
+        "--out_dir",
+        type=Path,
+        default=None,
+        help=(
+            "Write outputs here: folder of WAVs → <out_dir>/<stem>_annotations.csv for each file; "
+            "single WAV without --save_csv → <out_dir>/<stem>_annotations.csv."
+        ),
     )
     p_pr.add_argument("--save_format", type=str, default="csv", choices=("csv", "h5"))
     p_pr.add_argument("--verbose", type=int, default=1)
     p_pr.add_argument("--batch_size", type=int, default=None)
     p_pr.add_argument("--segment_thres", type=float, default=0.5)
+    p_pr.add_argument(
+        "--segment_minlen",
+        type=float,
+        default=None,
+        help=(
+            "Min voiced segment length in seconds after thresholding; shorter runs are removed. "
+            "If set, overrides *_params.yaml post_opt min_len when --segment-post-opt is on."
+        ),
+    )
+    p_pr.add_argument(
+        "--segment_fillgap",
+        type=float,
+        default=None,
+        help=(
+            "Bridge silence gaps shorter than this (seconds) inside a voiced region. "
+            "If set, overrides *_params.yaml post_opt gap_dur when --segment-post-opt is on."
+        ),
+    )
+    p_pr.add_argument(
+        "--no-segment-post-opt",
+        action="store_true",
+        help="Do not read post_opt min_len/gap_dur from params; only CLI values (if any) apply.",
+    )
     p_pr.add_argument("--event_thres", type=float, default=0.5)
     p_pr.add_argument("--resample", action="store_true", default=True)
     p_pr.add_argument("--no_resample", action="store_false", dest="resample")
